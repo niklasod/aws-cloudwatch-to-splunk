@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Creates function to ship logs from Cloudwatch logs to a Splunk HEC "
+
+Parameters:
+  LogGroupArn:
+    Type: String
+  
+  LogGroupName:
+    Type: String
+
+  SplunkHecURL:
+    Type: String
+  
+  SplunkHecToken:
+    Type: String
+
+  
+Resources:
+  CloudwatchSplunkLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudwatchSplunkLambdaExecutionRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+
+
+  CloudwatchSplunkLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import requests
+          import json
+          import os
+          import base64, gzip
+
+          def lambda_handler(event, context):
+            decoded = decode_message(event)
+
+            logevents = decoded['logEvents']
+            for e in logevents:
+              message = e['message']
+              send_to_splunk(message)
+
+          def decode_event(event):
+            base64_message = event['awslogs']['data']
+            decoded = json.loads(gzip.decompress(base64.b64decode(base64_message)))
+            return decoded
+
+          def send_to_splunk(message):
+            splunk_url = os.environ['SPLUNK_HEC_URL']
+            splunk_token = os.environ['TOKEN']
+            auth_header =  {'Authorization': splunk_token}
+            message_dict = json.loads(message)
+            splunk_message = {
+              "event": message_dict
+            }
+            print(json.dumps(splunk_message))
+            response = requests.post(splunk_hec_url, headers=auth_header, json=json.dumps(splunk_message) verify=False)
+            print(response.text)
+
+
+      Handler: index.lambda_handler
+      Environment: 
+        Variables:
+          SPLUNK_HEC_URL: !Ref SplunkHecURL
+          TOKEN: !Ref SplunkHecToken
+      
+      MemorySize: 128
+      Runtime: python3.7
+      Timeout: 30
+      Role: !GetAtt CloudwatchSplunkLambdaExecutionRole.Arn
+
+  SubscriptionFilterLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CloudwatchSplunkLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: !Sub logs.${AWS::Region}.amazonaws.com
+      SourceArn: !Ref LogGroupArn
+
+  CloudwatchLogsSubscriptionFilter:
+    Type: AWS::Logs::SubscriptionFilter
+    Properties:
+      DestinationArn: !GetAtt CloudwatchSplunkLambda.Arn
+      FilterPattern: '{($.userIdentity.type="Root" && $.userIdentity.invokedBy NOT EXISTS && $.eventType != "AwsServiceEvent" && $.eventName = "ConsoleLogin")||($.userIdentity.type="AssumedRole" && $.sourceIPAddress="155.4.222.24")}'
+      LogGroupName: !Ref LogGroupName

@@ -45,13 +45,15 @@ Resources:
           import base64, gzip
 
           def lambda_handler(event, context):
-            decoded = decode_message(event)
+            decoded_event = decode_event(event)
 
-            logevents = decoded['logEvents']
+            logevents = decoded_event['logEvents']
             for e in logevents:
               message = e['message']
               send_to_splunk(message)
 
+
+          # Decode base64 encoded data in Cloudtrail event
           def decode_event(event):
             base64_message = event['awslogs']['data']
             decoded = json.loads(gzip.decompress(base64.b64decode(base64_message)))
@@ -93,5 +95,5 @@ Resources:
     Type: AWS::Logs::SubscriptionFilter
     Properties:
       DestinationArn: !GetAtt CloudwatchSplunkLambda.Arn
-      FilterPattern: '{($.userIdentity.type="Root" && $.userIdentity.invokedBy NOT EXISTS && $.eventType != "AwsServiceEvent" && $.eventName = "ConsoleLogin")||($.userIdentity.type="AssumedRole" && $.sourceIPAddress="155.4.222.24")}'
+      FilterPattern: '{($.userIdentity.type="Root" && $.userIdentity.invokedBy NOT EXISTS && $.eventType != "AwsServiceEvent" && $.eventName = "ConsoleLogin"))}'
       LogGroupName: !Ref LogGroupName
